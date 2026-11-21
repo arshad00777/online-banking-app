@@ -1,0 +1,8 @@
+import fs from 'node:fs';import postgres from 'postgres';import bcrypt from 'bcryptjs';import crypto from 'node:crypto';
+const env=fs.existsSync('.env.local')?'.env.local':'.env';if(fs.existsSync(env))for(const line of fs.readFileSync(env,'utf8').split('\n')){const m=line.match(/^([A-Z_]+)=(.*)$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2]}
+if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL missing in .env.local');
+const sql=postgres(process.env.DATABASE_URL,{ssl:process.env.DATABASE_URL.includes('localhost')?false:'require',prepare:false});
+try{await sql.unsafe(fs.readFileSync('scripts/schema.sql','utf8'));
+const demo=[{role:'admin',name:'Demo Administrator',email:process.env.SEED_ADMIN_EMAIL,password:process.env.SEED_ADMIN_PASSWORD},{role:'customer',name:'Demo Customer',email:process.env.SEED_CUSTOMER_EMAIL,password:process.env.SEED_CUSTOMER_PASSWORD}];
+for(const u of demo){if(!u.email||!u.password||u.password.length<10)throw new Error('Seed emails/passwords must be set and passwords must be 10+ characters');const hash=await bcrypt.hash(u.password,12);const rows=await sql`INSERT INTO users(name,email,password_hash,role) VALUES(${u.name},${u.email.toLowerCase()},${hash},${u.role}) ON CONFLICT(email) DO NOTHING RETURNING id`;if(rows.length&&u.role==='customer'){await sql`INSERT INTO accounts(user_id,account_number,balance_cents) VALUES(${rows[0].id},${'AB'+crypto.randomUUID().replaceAll('-','').slice(0,12).toUpperCase()},25000000)`;await sql`INSERT INTO transactions(user_id,type,amount_cents,description,reference) VALUES(${rows[0].id},'credit',25000000,'Initial demo balance','DEMO-INITIAL')`}}
+console.log('Schema ready. Demo users inserted if absent. Existing passwords unchanged.');}finally{await sql.end()}
